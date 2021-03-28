@@ -37,6 +37,14 @@
 #include <linux/lwtunnel.h>
 #endif
 
+#ifdef HAVE_SEG6_KERNEL
+#include <linux/seg6_iptunnel.h>
+#endif
+
+#ifdef HAVE_SEG6_HMAC_KERNEL
+#include <linux/seg6_hmac.h>
+#endif
+
 #ifndef MSG_TRUNC			/* Hack: Several versions of glibc miss this one :( */
 #define MSG_TRUNC 0x20
 #endif
@@ -371,6 +379,12 @@ static struct nl_want_attrs encap_mpls_want[BIRD_RTA_MAX] = {
 };
 #endif
 
+#ifdef HAVE_SEG6_KERNEL
+static struct nl_want_attrs encap_seg6_want[BIRD_RTA_MAX] = {
+  [SEG6_IPTUNNEL_SRH] = { 1, 0, 0 },
+};
+#endif
+
 static struct nl_want_attrs rtm_attr_want4[BIRD_RTA_MAX] = {
   [RTA_DST]	  = { 1, 1, sizeof(ip4_addr) },
   [RTA_OIF]	  = { 1, 1, sizeof(u32) },
@@ -500,6 +514,39 @@ static inline int rta_get_mpls(struct rtattr *a, u32 *stack)
 }
 #endif
 
+#ifdef HAVE_SEG6_KERNEL
+static inline int rta_get_seg6(struct rtattr *a, ip6_addr *seg6, byte *mode, u32 *hmackeyid)
+{
+  struct seg6_iptunnel_encap *encap = (struct seg6_iptunnel_encap*)RTA_DATA(a);
+  *mode = encap->mode;
+
+  int segments = encap->srh->segments_left + 1;
+  if (segments > SEG6_MAX_SEGMENT_LIST) {
+    log(L_WARN "KRT: Too long SRv6 segment list received, ignoring");
+    return 0;
+  }
+
+#ifdef HAVE_SEG6_HMAC_KERNEL
+  if (encap->srh->flags & SR6_FLAG1_HMAC) {
+    struct sr6_tlv_hmac *tlv = (struct sr6_tlv_hmac *)(encap->srh->segments + segments);
+
+    if (tlv->tlvhdr.type != SR6_TLV_HMAC) {
+      log(L_WARN "KRT: SRv6 encap route has invalid HMAC TLV, ignoring");
+      return 0;
+    }
+
+    *hmackeyid = tlv->hmackeyid;
+  }
+#endif
+
+  for (int i = 0; i < segments; i++)
+  {
+    seg6[i] = ip6_ntoh(*(ip6_addr *) &encap->srh->segments[i]);
+  }
+  return segments;
+}
+#endif
+
 struct rtattr *
 nl_add_attr(struct nlmsghdr *h, uint bufsize, uint code, const void *data, uint dlen)
 {
@@ -606,6 +653,52 @@ nl_add_attr_via(struct nlmsghdr *h, uint bufsize, ip_addr ipa)
 }
 #endif
 
+#ifdef HAVE_SEG6_KERNEL
+static inline void
+nl_add_attr_seg6(struct nlmsghdr *h, uint bufsize, int code, struct nexthop *nh)
+{
+  uint len = sizeof(struct seg6_iptunnel_encap) + sizeof(struct ipv6_sr_hdr) + nh->seg6s * sizeof(ip6_addr);
+  char buf[len + 40];
+
+#ifdef HAVE_SEG6_HMAC_KERNEL
+  if (nh->seg6_hmac_keyid) {
+    struct sr6_tlv_hmac *tlv = (struct sr6_tlv_hmac *)(buf + len);
+    tlv->tlvhdr.type = SR6_TLV_HMAC;
+    tlv->tlvhdr.len = 38;
+    tlv->hmackeyid = nh->seg6_hmac_keyid;
+    len += 40;
+  }
+#endif
+
+  struct seg6_iptunnel_encap *encap = (struct seg6_iptunnel_encap *)buf;
+  uint srhlen = len - sizeof(struct seg6_iptunnel_encap);
+  encap->mode = nh->seg6_encap_mode;
+  encap->srh->type = 4;
+  encap->srh->segments_left = nh->seg6s - 1;
+  encap->srh->first_segment = nh->seg6s - 1;
+  encap->srh->flags = nh->seg6_flags;
+  encap->srh->hdrlen = (srhlen >> 3) - 1;
+
+  for (int i = 0; i < nh->seg6s; i++)
+  {
+    ip6_addr n = ip6_hton(nh->seg6[i]);
+    encap->srh->segments[i] = *(struct in6_addr*) &n;
+  }
+
+  nl_add_attr(h, bufsize, code, buf, len);
+}
+
+static inline void
+nl_add_attr_seg6_encap(struct nlmsghdr *h, uint bufsize, struct nexthop *nh)
+{
+  nl_add_attr_u16(h, bufsize, RTA_ENCAP_TYPE, LWTUNNEL_ENCAP_SEG6);
+
+  struct rtattr *nest = nl_open_attr(h, bufsize, RTA_ENCAP);
+  nl_add_attr_seg6(h, bufsize, SEG6_IPTUNNEL_SRH, nh);
+  nl_close_attr(h, nest);
+}
+#endif
+
 static inline struct rtnexthop *
 nl_open_nexthop(struct nlmsghdr *h, uint bufsize)
 {
@@ -629,12 +722,21 @@ nl_close_nexthop(struct nlmsghdr *h, struct rtnexthop *nh)
 static inline void
 nl_add_nexthop(struct nlmsghdr *h, uint bufsize, struct nexthop *nh, int af UNUSED)
 {
+  int lwtunnel_encap = 0;
+
 #ifdef HAVE_MPLS_KERNEL
   if (nh->labels > 0)
+  {
     if (af == AF_MPLS)
+    {
       nl_add_attr_mpls(h, bufsize, RTA_NEWDST, nh->labels, nh->label);
+    }
     else
+    {
       nl_add_attr_mpls_encap(h, bufsize, nh->labels, nh->label);
+      lwtunnel_encap++;
+    }
+  }
 
   if (ipa_nonzero(nh->gw))
   {
@@ -648,6 +750,18 @@ nl_add_nexthop(struct nlmsghdr *h, uint bufsize, struct nexthop *nh, int af UNUS
   if (ipa_nonzero(nh->gw))
     nl_add_attr_ipa(h, bufsize, RTA_GATEWAY, nh->gw);
 #endif
+
+#ifdef HAVE_SEG6_KERNEL
+  if (nh->seg6s > 0)
+  {
+    nl_add_attr_seg6_encap(h, bufsize, nh);
+    lwtunnel_encap++;
+  }
+#endif
+
+  if (lwtunnel_encap > 1) {
+    log(L_WARN "KRT: A route cannot have more than 1 lwtunnel encapsulation - This will not work");
+  }
 }
 
 static void
@@ -771,6 +885,15 @@ nl_parse_multipath(struct nl_parse_state *s, struct krt_proto *p, struct rtattr 
           nl_attr_len = RTA_PAYLOAD(a[RTA_ENCAP]);
           nl_parse_attrs(RTA_DATA(a[RTA_ENCAP]), encap_mpls_want, enca, sizeof(enca));
           rv->labels = rta_get_mpls(enca[RTA_DST], rv->label);
+          break;
+        }
+#endif
+#ifdef HAVE_SEG6_KERNEL
+      case LWTUNNEL_ENCAP_SEG6:
+        {
+          nl_attr_len = RTA_PAYLOAD(a[RTA_ENCAP]);
+          nl_parse_attrs(RTA_DATA(a[RTA_ENCAP]), encap_seg6_want, enca, sizeof(enca));
+          rv->seg6s = rta_get_seg6(enca[SEG6_IPTUNNEL_SRH], rv->seg6, &rv->seg6_encap_mode, &rv->seg6_hmac_keyid);
           break;
         }
 #endif
@@ -1764,6 +1887,15 @@ nl_parse_route(struct nl_parse_state *s, struct nlmsghdr *h)
           nl_attr_len = RTA_PAYLOAD(a[RTA_ENCAP]);
           nl_parse_attrs(RTA_DATA(a[RTA_ENCAP]), encap_mpls_want, enca, sizeof(enca));
           ra->nh.labels = rta_get_mpls(enca[RTA_DST], ra->nh.label);
+          break;
+        }
+#endif
+#ifdef HAVE_SEG6_KERNEL
+      case LWTUNNEL_ENCAP_SEG6:
+        {
+          nl_attr_len = RTA_PAYLOAD(a[RTA_ENCAP]);
+          nl_parse_attrs(RTA_DATA(a[RTA_ENCAP]), encap_seg6_want, enca, sizeof(enca));
+          ra->nh.seg6s = rta_get_seg6(enca[SEG6_IPTUNNEL_SRH], ra->nh.seg6, &ra->nh.seg6_encap_mode, &ra->nh.seg6_hmac_keyid);
           break;
         }
 #endif

@@ -54,6 +54,12 @@ AC_ARG_ENABLE([mpls-kernel],
   [enable_mpls_kernel=try]
 )
 
+AC_ARG_ENABLE([seg6-kernel],
+  [AS_HELP_STRING([--enable-seg6-kernel], [enable SRv6 support in kernel protocol @<:@try@:>@])],
+  [],
+  [enable_seg6_kernel=try]
+)
+
 AC_ARG_WITH([protocols],
   [AS_HELP_STRING([--with-protocols=LIST], [include specified routing protocols @<:@all@:>@])],
   [],
@@ -309,6 +315,24 @@ if test "$enable_mpls_kernel" != no ; then
   fi
 fi
 
+if test "$enable_seg6_kernel" != no ; then
+  BIRD_CHECK_SEG6_KERNEL
+  BIRD_CHECK_SEG6_HMAC_KERNEL
+
+  if test "$bird_cv_seg6_kernel" = yes ; then
+    AC_DEFINE([HAVE_SEG6_KERNEL], [1], [Define to 1 if kernel is SRv6 capable])
+    if test "$bird_cv_seg6_hmac_kernel" = yes ; then
+      AC_DEFINE([HAVE_SEG6_HMAC_KERNEL], [1], [Define to 1 if kernel has SRv6 HMAC headers])
+    fi
+  elif test "$enable_seg6_kernel" = yes ; then
+    AC_MSG_ERROR([Kernel SRv6 support not found.])
+  fi
+
+  if test "$enable_seg6_kernel" = try ; then
+    enable_seg6_kernel="$bird_cv_seg6_kernel"
+  fi
+fi
+
 all_protocols="$proto_bfd babel bgp mrt ospf perf pipe radv rip rpki static"
 
 all_protocols=`echo $all_protocols | sed 's/ /,/g'`
@@ -473,6 +497,10 @@ AC_MSG_RESULT([        POSIX threads:		$enable_pthreads])
 AC_MSG_RESULT([        Routing protocols:	$protocols])
 AC_MSG_RESULT([        LibSSH support in RPKI:	$enable_libssh])
 AC_MSG_RESULT([        Kernel MPLS support:	$enable_mpls_kernel])
+AC_MSG_RESULT([        Kernel SRv6 support:	$enable_seg6_kernel])
+if test "$enable_seg6_kernel" = yes ; then
+AC_MSG_RESULT([          SRv6 HMAC headers:	$bird_cv_seg6_hmac_kernel])
+fi
 AC_MSG_RESULT([        Client:			$enable_client])
 
 rm -f $objdir/.*-stamp

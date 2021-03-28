@@ -115,6 +115,62 @@ AC_DEFUN([BIRD_CHECK_MPLS_KERNEL],
   )
 ])
 
+AC_DEFUN([BIRD_CHECK_SEG6_KERNEL],
+[
+  AC_CACHE_CHECK(
+    [for Linux SRv6 headers],
+    [bird_cv_seg6_kernel],
+    [
+      AC_COMPILE_IFELSE(
+        [
+          AC_LANG_PROGRAM(
+            [
+              #include <linux/lwtunnel.h>
+              #include <linux/rtnetlink.h>
+              #include <linux/seg6_iptunnel.h>
+              #include <linux/seg6.h>
+              void t(int arg);
+            ],
+            [
+              t(RTA_ENCAP_TYPE);
+              t(RTA_ENCAP);
+              t(LWTUNNEL_ENCAP_SEG6);
+              t(SEG6_IPTUNNEL_SRH);
+              t(SR6_FLAG1_HMAC);
+            ]
+          )
+        ],
+        [bird_cv_seg6_kernel=yes],
+        [bird_cv_seg6_kernel=no]
+      )
+    ]
+  )
+])
+
+AC_DEFUN([BIRD_CHECK_SEG6_HMAC_KERNEL],
+[
+  AC_CACHE_CHECK(
+    [for Linux SRv6 HMAC headers],
+    [bird_cv_seg6_hmac_kernel],
+    [
+      AC_COMPILE_IFELSE(
+        [
+          AC_LANG_PROGRAM(
+            [
+              #include <linux/seg6_hmac.h>
+              struct sr6_tlv_hmac *tlv;
+            ],
+            [
+            ]
+          )
+        ],
+        [bird_cv_seg6_hmac_kernel=yes],
+        [bird_cv_seg6_hmac_kernel=no]
+      )
+    ]
+  )
+])
+
 AC_DEFUN([BIRD_CHECK_ANDROID_GLOB],
 [
   AC_CACHE_CHECK(
