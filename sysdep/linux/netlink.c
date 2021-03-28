@@ -33,7 +33,7 @@
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 
-#ifdef HAVE_MPLS_KERNEL
+#ifdef HAVE_LWT_KERNEL
 #include <linux/lwtunnel.h>
 #endif
 
@@ -760,19 +760,25 @@ nl_parse_multipath(struct nl_parse_state *s, struct krt_proto *p, struct rtattr 
 	    return NULL;
 	}
 
+#ifdef HAVE_LWT_KERNEL
+  if (a[RTA_ENCAP] && a[RTA_ENCAP_TYPE])
+  {
+    struct rtattr *enca[BIRD_RTA_MAX];
+    switch (rta_get_u16(a[RTA_ENCAP_TYPE])) {
 #ifdef HAVE_MPLS_KERNEL
-      if (a[RTA_ENCAP] && a[RTA_ENCAP_TYPE])
-      {
-	if (rta_get_u16(a[RTA_ENCAP_TYPE]) != LWTUNNEL_ENCAP_MPLS) {
-	  log(L_WARN "KRT: Unknown encapsulation method %d in multipath", rta_get_u16(a[RTA_ENCAP_TYPE]));
-	  return NULL;
-	}
-
-	struct rtattr *enca[BIRD_RTA_MAX];
-	nl_attr_len = RTA_PAYLOAD(a[RTA_ENCAP]);
-	nl_parse_attrs(RTA_DATA(a[RTA_ENCAP]), encap_mpls_want, enca, sizeof(enca));
-	rv->labels = rta_get_mpls(enca[RTA_DST], rv->label);
-      }
+      case LWTUNNEL_ENCAP_MPLS:
+        {
+          nl_attr_len = RTA_PAYLOAD(a[RTA_ENCAP]);
+          nl_parse_attrs(RTA_DATA(a[RTA_ENCAP]), encap_mpls_want, enca, sizeof(enca));
+          rv->labels = rta_get_mpls(enca[RTA_DST], rv->label);
+          break;
+        }
+#endif
+      default:
+        log(L_WARN "KRT: Unknown encapsulation method %d in multipath", rta_get_u16(a[RTA_ENCAP_TYPE]));
+        return NULL;
+    }
+  }
 #endif
 
     next:
@@ -1744,24 +1750,28 @@ nl_parse_route(struct nl_parse_state *s, struct nlmsghdr *h)
 #ifdef HAVE_MPLS_KERNEL
   if ((i->rtm_family == AF_MPLS) && a[RTA_NEWDST] && !ra->nh.next)
     ra->nh.labels = rta_get_mpls(a[RTA_NEWDST], ra->nh.label);
+#endif
 
+#ifdef HAVE_LWT_KERNEL
   if (a[RTA_ENCAP] && a[RTA_ENCAP_TYPE] && !ra->nh.next)
+  {
+    struct rtattr *enca[BIRD_RTA_MAX];
+    switch (rta_get_u16(a[RTA_ENCAP_TYPE]))
     {
-      switch (rta_get_u16(a[RTA_ENCAP_TYPE]))
-	{
-	  case LWTUNNEL_ENCAP_MPLS:
-	    {
-	      struct rtattr *enca[BIRD_RTA_MAX];
-	      nl_attr_len = RTA_PAYLOAD(a[RTA_ENCAP]);
-	      nl_parse_attrs(RTA_DATA(a[RTA_ENCAP]), encap_mpls_want, enca, sizeof(enca));
-	      ra->nh.labels = rta_get_mpls(enca[RTA_DST], ra->nh.label);
-	      break;
-	    }
-	  default:
-	    SKIP("unknown encapsulation method %d\n", rta_get_u16(a[RTA_ENCAP_TYPE]));
-	    break;
-	}
+#ifdef HAVE_MPLS_KERNEL
+      case LWTUNNEL_ENCAP_MPLS:
+        {
+          nl_attr_len = RTA_PAYLOAD(a[RTA_ENCAP]);
+          nl_parse_attrs(RTA_DATA(a[RTA_ENCAP]), encap_mpls_want, enca, sizeof(enca));
+          ra->nh.labels = rta_get_mpls(enca[RTA_DST], ra->nh.label);
+          break;
+        }
+#endif
+      default:
+        SKIP("unknown encapsulation method %d\n", rta_get_u16(a[RTA_ENCAP_TYPE]));
+        break;
     }
+  }
 #endif
 
   if (i->rtm_scope != def_scope)

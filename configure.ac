@@ -290,6 +290,11 @@ if test "$enable_libssh" != no ; then
   fi
 fi
 
+BIRD_CHECK_LWT_KERNEL
+if test "$bird_cv_lwt_kernel" = yes ; then
+  AC_DEFINE([HAVE_LWT_KERNEL], [1], [Define to 1 if kernel is LWTUNNEL capable])
+fi
+
 if test "$enable_mpls_kernel" != no ; then
   BIRD_CHECK_MPLS_KERNEL
 
