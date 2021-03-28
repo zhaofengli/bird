@@ -178,6 +178,9 @@ nexthop_hash(struct nexthop *x)
 
     for (int i = 0; i < x->labels; i++)
       h ^= x->label[i] ^ (h << 6) ^ (h >> 7);
+
+    for (int i = 0; i < x->seg6s; i++)
+      h ^= ip6_hash(x->seg6[i]) ^ (h << 5) ^ (h >> 9);
   }
 
   return h;
@@ -190,12 +193,17 @@ nexthop__same(struct nexthop *x, struct nexthop *y)
   {
     if (!ipa_equal(x->gw, y->gw) || (x->iface != y->iface) ||
 	(x->flags != y->flags) || (x->weight != y->weight) ||
-	(x->labels_orig != y->labels_orig) || (x->labels != y->labels))
+	(x->labels_orig != y->labels_orig) || (x->labels != y->labels) ||
+	(x->seg6s != y->seg6s))
       return 0;
 
     for (int i = 0; i < x->labels; i++)
       if (x->label[i] != y->label[i])
 	return 0;
+
+    for (int i = 0; i < x->seg6s; i++)
+      if (!ip6_equal(x->seg6[i], y->seg6[i]))
+        return 0;
   }
 
   return x == y;
@@ -226,9 +234,20 @@ nexthop_compare_node(const struct nexthop *x, const struct nexthop *y)
   if (r)
     return r;
 
+  r = ((int) y->seg6s) - ((int) x->seg6s);
+  if (r)
+    return r;
+
   for (int i = 0; i < y->labels; i++)
   {
     r = ((int) y->label[i]) - ((int) x->label[i]);
+    if (r)
+      return r;
+  }
+
+  for (int i = 0; i < y->seg6s; i++)
+  {
+    r = ipa_compare(x->seg6[i], y->seg6[i]);
     if (r)
       return r;
   }
@@ -355,7 +374,8 @@ nexthop_is_sorted(struct nexthop *x)
 static inline slab *
 nexthop_slab(struct nexthop *nh)
 {
-  return nexthop_slab_[MIN(nh->labels, 3)];
+  int idx = MIN(MAX(nh->labels, nh->seg6s), 3);
+  return nexthop_slab_[idx];
 }
 
 static struct nexthop *
@@ -376,6 +396,13 @@ nexthop_copy(struct nexthop *o)
       n->labels = o->labels;
       for (int i=0; i<o->labels; i++)
 	n->label[i] = o->label[i];
+
+      n->seg6s = o->seg6s;
+      n->seg6_encap_mode = o->seg6_encap_mode;
+      n->seg6_flags = o->seg6_flags;
+      n->seg6_hmac_keyid = o->seg6_hmac_keyid;
+      for (int i=0; i<o->seg6s; i++)
+        n->seg6[i] = o->seg6[i];
 
       *last = n;
       last = &(n->next);
@@ -1128,7 +1155,8 @@ rta_same(rta *x, rta *y)
 static inline slab *
 rta_slab(rta *a)
 {
-  return rta_slab_[a->nh.labels > 2 ? 3 : a->nh.labels];
+  int idx = MIN(MAX(a->nh.labels, a->nh.seg6s), 3);
+  return rta_slab_[idx];
 }
 
 static rta *
@@ -1330,14 +1358,14 @@ rta_init(void)
   rta_pool = rp_new(&root_pool, "Attributes");
 
   rta_slab_[0] = sl_new(rta_pool, sizeof(rta));
-  rta_slab_[1] = sl_new(rta_pool, sizeof(rta) + sizeof(u32));
-  rta_slab_[2] = sl_new(rta_pool, sizeof(rta) + sizeof(u32)*2);
-  rta_slab_[3] = sl_new(rta_pool, sizeof(rta) + sizeof(u32)*MPLS_MAX_LABEL_STACK);
+  rta_slab_[1] = sl_new(rta_pool, sizeof(rta) + sizeof(u32) + sizeof(ip6_addr));
+  rta_slab_[2] = sl_new(rta_pool, sizeof(rta) + sizeof(u32)*2 + sizeof(ip6_addr)*2);
+  rta_slab_[3] = sl_new(rta_pool, sizeof(rta) + sizeof(u32)*MPLS_MAX_LABEL_STACK + sizeof(ip6_addr)*SEG6_MAX_SEGMENT_LIST);
 
   nexthop_slab_[0] = sl_new(rta_pool, sizeof(struct nexthop));
-  nexthop_slab_[1] = sl_new(rta_pool, sizeof(struct nexthop) + sizeof(u32));
-  nexthop_slab_[2] = sl_new(rta_pool, sizeof(struct nexthop) + sizeof(u32)*2);
-  nexthop_slab_[3] = sl_new(rta_pool, sizeof(struct nexthop) + sizeof(u32)*MPLS_MAX_LABEL_STACK);
+  nexthop_slab_[1] = sl_new(rta_pool, sizeof(struct nexthop) + sizeof(u32) + sizeof(ip6_addr));
+  nexthop_slab_[2] = sl_new(rta_pool, sizeof(struct nexthop) + sizeof(u32)*2 + sizeof(ip6_addr)*2);
+  nexthop_slab_[3] = sl_new(rta_pool, sizeof(struct nexthop) + sizeof(u32)*MPLS_MAX_LABEL_STACK + sizeof(ip6_addr)*SEG6_MAX_SEGMENT_LIST);
 
   rta_alloc_hash();
   rte_src_init();

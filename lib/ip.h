@@ -28,6 +28,8 @@
 #define IP6_RIP_ROUTERS		ipa_build6(0xFF020000, 0, 0, 9)
 #define IP6_BABEL_ROUTERS	ipa_build6(0xFF020000, 0, 0, 0x00010006)
 
+#define SEG6_MAX_SEGMENT_LIST 8
+
 #define IP4_NONE		_MI4(0)
 #define IP6_NONE		_MI6(0,0,0,0)
 

@@ -2121,6 +2121,26 @@ no_nexthop:
       memcpy(nhp->label, nh->label, nh->labels * sizeof(u32));
     }
 
+    if (nh->seg6s) {
+      // This is an SRv6 encapsulation route. The kernel will encapsulate the
+      // packet then restart the route selection process with the new destination
+      // address (i.e., active SID). The gateway of this route isn't actually used.
+
+      if (nhp->seg6s)
+      {
+        // What should be the behavior of "stacking" SIDs?
+        log(L_WARN "Encountered multiple SRv6 encapsulations in recursion");
+      }
+      else
+      {
+        nhp->seg6s = nh->seg6s;
+        nhp->seg6_encap_mode = nh->seg6_encap_mode;
+        nhp->seg6_flags = nh->seg6_flags;
+        nhp->seg6_hmac_keyid = nh->seg6_hmac_keyid;
+        memcpy(nhp->seg6, nh->seg6, nh->seg6s * sizeof(ip6_addr));
+      }
+    }
+
     if (ipa_nonzero(nh->gw))
     {
       nhp->gw = nh->gw;			/* Router nexthop */

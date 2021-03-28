@@ -72,6 +72,7 @@ rt_show_rte(struct cli *c, byte *ia, rte *e, struct rt_show_data *d, int primary
     for (nh = &(a->nh); nh; nh = nh->next)
     {
       char mpls[MPLS_MAX_LABEL_STACK*12 + 5], *lsp = mpls;
+      char seg6[SEG6_MAX_SEGMENT_LIST*(39 + 1) + 6], *seg6p = seg6;
       char *onlink = (nh->flags & RNF_ONLINK) ? " onlink" : "";
       char weight[16] = "";
 
@@ -83,15 +84,23 @@ rt_show_rte(struct cli *c, byte *ia, rte *e, struct rt_show_data *d, int primary
 	}
       *lsp = '\0';
 
+      if (nh->seg6s)
+      {
+        seg6p += bsprintf(seg6p, " seg6 %I6", nh->seg6[nh->seg6s - 1]);
+        for (int i = 1; i < nh->seg6s; i++)
+          seg6p += bsprintf(seg6p, ",%I6", nh->seg6[nh->seg6s - i - 1]);
+        *seg6p = '\0';
+      }
+
       if (a->nh.next)
 	bsprintf(weight, " weight %d", nh->weight + 1);
 
       if (ipa_nonzero(nh->gw))
-	cli_printf(c, -1007, "\tvia %I on %s%s%s%s",
-		   nh->gw, nh->iface->name, mpls, onlink, weight);
+	cli_printf(c, -1007, "\tvia %I on %s%s%s%s%s",
+		   nh->gw, nh->iface->name, mpls, seg6, onlink, weight);
       else
-	cli_printf(c, -1007, "\tdev %s%s%s",
-		   nh->iface->name, mpls,  onlink, weight);
+	cli_printf(c, -1007, "\tdev %s%s%s%s",
+		   nh->iface->name, mpls, seg6, onlink, weight);
     }
 
   if (d->verbose)
